@@ -1,0 +1,19 @@
+[Unit]
+Description=Fetch Garmin endurance score twice daily
+
+[Timer]
+# 早上一次：抓到昨晚睡眠結算後的分數更新
+OnCalendar=*-*-* 07:20:00
+# 傍晚一次：抓到當日騎乘上傳後的變動
+OnCalendar=*-*-* 19:20:00
+
+# mini PC 若在排程時間點是關機/休眠狀態，開機後補跑
+Persistent=true
+
+# 避開整點，減少同時打 Garmin 的機率
+RandomizedDelaySec=600
+
+Unit=garmin-endurance.service
+
+[Install]
+WantedBy=timers.target

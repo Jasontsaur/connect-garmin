@@ -1,0 +1,32 @@
+[Unit]
+Description=Fetch Garmin endurance score into SQLite
+Documentation=https://github.com/cyberjunky/python-garminconnect
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/garmin-endurance/env
+ExecStart=%h/.local/share/garmin-endurance/venv/bin/python %h/.local/share/garmin-endurance/garmin_endurance.py fetch
+
+# 前綴 - 表示失敗不影響整個 unit：intervals.icu 掛掉時，
+# Garmin 那邊已經抓到的資料還是算成功。沒設 ICU_API_KEY 就會直接跳過。
+ExecStart=-%h/.local/share/garmin-endurance/venv/bin/python %h/.local/share/garmin-endurance/garmin_endurance.py merge --csv %h/.local/share/garmin-endurance/daily.csv
+
+# WSL2 剛喚醒時網路可能還沒好，讓 systemd 自己重試
+Restart=on-failure
+RestartSec=180
+StartLimitBurst=3
+
+TimeoutStartSec=300
+Nice=10
+
+# 基本隔離：只允許寫入自己的資料目錄與 token 目錄
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/garmin-endurance %h/.garminconnect %h/.cache
+
+[Install]
+WantedBy=default.target
