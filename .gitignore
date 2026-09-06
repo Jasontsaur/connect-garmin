@@ -1,6 +1,10 @@
-garmin.db
-garmin.db-journal
+# DB 用 WAL 模式，除了主檔還會產生 -wal / -shm，裡面同樣有真實資料。
+# 用萬用字元一次擋掉，不要逐一列舉 —— 漏掉一個就是把健康資料推上公開 repo。
+garmin.db*
+*.sqlite
+*.sqlite3
 daily.csv
+*.csv
 venv/
 __pycache__/
 *.pyc

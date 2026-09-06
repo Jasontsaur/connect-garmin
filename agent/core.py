@@ -4,6 +4,11 @@ Agent Core —— 把 LLM、規劃、記憶、工具接起來。
 Planner 這一層是自己寫的迴圈：問模型 → 模型要求呼叫工具 → 執行 → 把結果餵回去
 → 再問一次，直到模型不再要求工具為止。迴圈有步數上限，避免模型鬼打牆時
 一直燒 token。
+
+用的是 Responses API 而不是 Chat Completions。推理型模型（gpt-5.x 這一代）
+在 /v1/chat/completions 上不接受 function tools，除非把 reasoning_effort
+關掉 —— 那等於為了配合舊介面放棄模型的推理能力，不划算。
+兩邊的工具 schema 格式也不一樣，見 tools.py 的註解。
 """
 
 from __future__ import annotations
@@ -68,12 +73,12 @@ class AgentCore:
 
     def handle(self, chat_id: int, user_text: str) -> str:
         """跑完一輪對話，回傳要送回 Telegram 的文字。"""
-        messages: list[dict] = [{"role": "system", "content": SYSTEM}]
-        messages += self.memory.history(chat_id)
-        messages.append({"role": "user", "content": user_text})
+        # 系統提示走 instructions 參數，不放進 input
+        items: list[dict] = self.memory.history(chat_id)
+        items.append({"role": "user", "content": user_text})
 
         try:
-            reply = self._run(messages)
+            reply = self._run(items)
         except openai.AuthenticationError:
             log.error("OPENAI_API_KEY 無效")
             return "設定有問題：OpenAI 金鑰無效，我先不亂猜了。"
@@ -99,44 +104,35 @@ class AgentCore:
         self.memory.append(chat_id, "assistant", reply)
         return reply
 
-    def _run(self, messages: list[dict]) -> str:
+    def _run(self, items: list[dict]) -> str:
         for step in range(MAX_STEPS):
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model=self.model,
-                messages=messages,
+                instructions=SYSTEM,
+                input=items,
                 tools=SCHEMAS,
             )
-            message = response.choices[0].message
 
-            if not message.tool_calls:
-                return (message.content or "").strip()
+            calls = [i for i in response.output if i.type == "function_call"]
+            if not calls:
+                return (response.output_text or "").strip()
 
-            # 帶著 tool_calls 的 assistant 訊息一定要原樣放回去，
-            # 否則下一輪的 tool 結果會對不到人。
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in message.tool_calls
-                    ],
-                }
-            )
+            # 模型這一輪的產出要原樣接回去（含推理項目），否則下一輪的
+            # function_call_output 會對不到人。
+            #
+            # by_alias 是必要的：SDK 為了避開 Python 保留字，把欄位存成
+            # async_，直接 model_dump() 送出去 API 會回 "Unknown parameter"。
+            items += [
+                i.model_dump(by_alias=True, exclude_none=True, mode="json")
+                for i in response.output
+            ]
 
-            for call in message.tool_calls:
-                messages.append(
+            for call in calls:
+                items.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "content": self._execute(call),
+                        "type": "function_call_output",
+                        "call_id": call.call_id,
+                        "output": self._execute(call),
                     }
                 )
 
@@ -148,14 +144,14 @@ class AgentCore:
         執行一個工具呼叫。任何失敗都要回一段文字給模型，不能讓例外往上炸 ——
         模型收到錯誤訊息還有機會換個做法，收不到就只會卡住。
         """
-        name = call.function.name
+        name = call.name
         func = REGISTRY.get(name)
         if func is None:
             log.warning("模型要求了不存在的工具：%s", name)
             return json.dumps({"error": f"沒有這個工具：{name}"}, ensure_ascii=False)
 
         try:
-            args = json.loads(call.function.arguments or "{}")
+            args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError as exc:
             log.warning("工具 %s 的參數不是合法 JSON：%s", name, exc)
             return json.dumps({"error": f"參數解析失敗：{exc}"}, ensure_ascii=False)

@@ -157,116 +157,98 @@ def get_data_health(limit: int = 5) -> str:
 
 # --------------------------------------------------------------------------- #
 # 給模型看的定義
+#
+# 這是 Responses API 的格式：name / description / parameters 都在頂層。
+# Chat Completions 的格式是包在 "function" 底下的巢狀結構，兩者不通用 ——
+# 用錯會直接 400。
 # --------------------------------------------------------------------------- #
 
 SCHEMAS = [
     {
         "type": "function",
-        "function": {
-            "name": "query_daily_metrics",
-            "description": (
-                "查詢每日的耐力分數與訓練負荷指標（CTL/ATL/TSB/ACWR/靜止心率/HRV/"
-                "睡眠/體重）。唯讀，只讀本機資料庫，不會連線到 Garmin。"
-                "想看「目前狀況如何」「最近趨勢」「某天的數字」都用這個。"
-                "endurance 是 Garmin 耐力分數；ctl 是長期負荷（體能）；"
-                "atl 是短期負荷（疲勞）；tsb = ctl - atl，正值代表恢復；"
-                "acwr = atl / ctl。Garmin 不是每天更新，endurance 可能是 null。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "往回查幾天，預設 30",
-                    }
-                },
-                "required": [],
+        "name": "query_daily_metrics",
+        "description": (
+            "查詢每日的耐力分數與訓練負荷指標（CTL/ATL/TSB/ACWR/靜止心率/HRV/"
+            "睡眠/體重）。唯讀，只讀本機資料庫，不會連線到 Garmin。"
+            "想看「目前狀況如何」「最近趨勢」「某天的數字」都用這個。"
+            "endurance 是 Garmin 耐力分數；ctl 是長期負荷（體能）；"
+            "atl 是短期負荷（疲勞）；tsb = ctl - atl，正值代表恢復；"
+            "acwr = atl / ctl。Garmin 不是每天更新，endurance 可能是 null。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "往回查幾天，預設 30"}
             },
+            "required": [],
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "get_endurance_trend",
-            "description": (
-                "看耐力分數的走勢，含近 7 日均值與區間起始 7 日均值的比較。唯讀。"
-                "回答「有沒有進步」「最近掉很多嗎」這類問題時用這個，"
-                "比自己把每日資料讀過去再心算可靠。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "往回看幾天，預設 30",
-                    }
-                },
-                "required": [],
+        "name": "get_endurance_trend",
+        "description": (
+            "看耐力分數的走勢，含近 7 日均值與區間起始 7 日均值的比較。唯讀。"
+            "回答「有沒有進步」「最近掉很多嗎」這類問題時用這個，"
+            "比自己把每日資料讀過去再心算可靠。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "往回看幾天，預設 30"}
             },
+            "required": [],
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "refresh_garmin_data",
-            "description": (
-                "連線到 Garmin Connect 抓最新的耐力分數並寫入資料庫。會走網路，"
-                "通常要幾秒。排程本來就每天跑兩次（07:20 / 19:20），"
-                "所以只在使用者明確要求更新、或查到的資料明顯過期時才呼叫。"
-                "抓完想知道結果，再呼叫 query_daily_metrics。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "回溯抓幾天，預設 45。冪等寫入，重抓不會產生重複",
-                    }
-                },
-                "required": [],
+        "name": "refresh_garmin_data",
+        "description": (
+            "連線到 Garmin Connect 抓最新的耐力分數並寫入資料庫。會走網路，"
+            "通常要幾秒。排程本來就每天跑兩次（07:20 / 19:20），"
+            "所以只在使用者明確要求更新、或查到的資料明顯過期時才呼叫。"
+            "抓完想知道結果，再呼叫 query_daily_metrics。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "回溯抓幾天，預設 45。冪等寫入，重抓不會產生重複",
+                }
             },
+            "required": [],
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "refresh_intervals_data",
-            "description": (
-                "從 intervals.icu 抓 CTL/ATL 等 wellness 資料並併入資料庫。會走網路。"
-                "跟 refresh_garmin_data 一樣，排程已經定期在跑，"
-                "只在使用者明確要求更新時才呼叫。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "回溯抓幾天，預設 60",
-                    }
-                },
-                "required": [],
+        "name": "refresh_intervals_data",
+        "description": (
+            "從 intervals.icu 抓 CTL/ATL 等 wellness 資料並併入資料庫。會走網路。"
+            "跟 refresh_garmin_data 一樣，排程已經定期在跑，"
+            "只在使用者明確要求更新時才呼叫。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "回溯抓幾天，預設 60"}
             },
+            "required": [],
         },
     },
     {
         "type": "function",
-        "function": {
-            "name": "get_data_health",
-            "description": (
-                "查最近幾次抓取的執行紀錄，判斷資料是不是新鮮、排程有沒有在跑。"
-                "使用者問「資料多久沒更新了」「排程還活著嗎」「怎麼都沒有新資料」"
-                "時用這個。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "回傳最近幾筆紀錄，預設 5",
-                    }
-                },
-                "required": [],
+        "name": "get_data_health",
+        "description": (
+            "查最近幾次抓取的執行紀錄，判斷資料是不是新鮮、排程有沒有在跑。"
+            "使用者問「資料多久沒更新了」「排程還活著嗎」「怎麼都沒有新資料」"
+            "時用這個。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "回傳最近幾筆紀錄，預設 5"}
             },
+            "required": [],
         },
     },
 ]

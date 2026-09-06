@@ -70,9 +70,22 @@ class Telegram:
         return result.get("result", [])
 
     def send(self, chat_id: int, text: str) -> None:
-        """送訊息。超過長度上限就切成多則，切在換行處以免把句子腰斬。"""
+        """
+        送訊息。超過長度上限就切成多則，切在換行處以免把句子腰斬。
+
+        先試 Markdown（模型愛用 **粗體**，純文字送會原樣顯示星號），
+        失敗就退回純文字。Telegram 的 Markdown 解析很脆弱 —— 落單的 * 或 _
+        就會回 400，而寧可少一點排版也不能讓訊息送不出去。
+        """
         for chunk in _split(text, MAX_MESSAGE):
-            self.call("sendMessage", {"chat_id": chat_id, "text": chunk})
+            params = {"chat_id": chat_id, "text": chunk}
+            try:
+                self.call("sendMessage", {**params, "parse_mode": "Markdown"})
+            except urllib.error.HTTPError as exc:
+                if exc.code != 400:
+                    raise
+                log.debug("Markdown 解析失敗，改送純文字")
+                self.call("sendMessage", params)
 
     def typing(self, chat_id: int) -> None:
         try:

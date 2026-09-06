@@ -11,6 +11,10 @@ StartLimitBurst=10
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/garmin-endurance/env
+
+# 沒有這行，Python 在非 tty 下會對 stderr 做區塊緩衝，log 要等緩衝滿
+# 或程序結束才進 journal —— 常駐服務等於看不到即時狀態。
+Environment=PYTHONUNBUFFERED=1
 ExecStart=%h/.local/share/garmin-endurance/venv/bin/python %h/.local/share/garmin-endurance/telegram_adapter.py
 
 # long polling 會一直斷線重連，斷了就該自己爬起來。
