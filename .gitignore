@@ -1,0 +1,6 @@
+garmin.db
+garmin.db-journal
+daily.csv
+venv/
+__pycache__/
+*.pyc
