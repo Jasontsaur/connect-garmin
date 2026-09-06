@@ -3,18 +3,22 @@ Description=Telegram agent for Garmin endurance data
 After=network-online.target
 Wants=network-online.target
 
+# StartLimit* 屬於 [Unit] 而不是 [Service]，寫錯地方 systemd 只會印一行
+# "Unknown key" 然後照樣跑，限制等於沒生效。
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/garmin-endurance/env
 ExecStart=%h/.local/share/garmin-endurance/venv/bin/python %h/.local/share/garmin-endurance/telegram_adapter.py
 
 # long polling 會一直斷線重連，斷了就該自己爬起來。
-# 設定錯誤（缺 token、缺白名單）會 exit 2，那種情況重啟也沒用，
-# 但 systemd 分不出來，所以靠 StartLimit 避免無窮快速重啟洗爆 journal。
+# 但設定錯誤（缺 token、缺白名單、缺金鑰）會 exit 2，那種情況重啟一萬次
+# 也不會變好，只會每 15 秒洗一次 journal —— 所以明確排除掉。
 Restart=always
 RestartSec=15
-StartLimitIntervalSec=300
-StartLimitBurst=10
+RestartPreventExitStatus=2
 
 Nice=10
 
