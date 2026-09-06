@@ -9,6 +9,11 @@
 | `garmin_endurance.py` | 主程式，含 `login` / `fetch` / `merge` / `report` / `probe` 五個子命令 |
 | `garmin-endurance.service` | systemd oneshot service |
 | `garmin-endurance.timer` | 排程 07:20 與 19:20，各帶 ±10 分鐘隨機延遲 |
+| `telegram_adapter.py` | Telegram 對話介面（long polling） |
+| `agent/core.py` | Agent Core：串 LLM、工具、記憶 |
+| `agent/tools.py` | 把既有能力包成 Claude 可呼叫的工具 |
+| `agent/memory.py` | 每個 chat 的對話歷史 |
+| `garmin-agent.service` | Telegram agent 的常駐 service |
 | `install.sh` | 建 venv、裝套件、佈署 unit、產生 `~/.local/bin/garmin-endurance` |
 
 ## 部署
@@ -108,6 +113,64 @@ FROM v_daily WHERE day >= date('now','-90 day');
 
 一個判讀上的提醒：ACWR 常被當成受傷風險指標，但近年的統合分析對它在個人層級的
 預測力並不支持，當粗略參考就好，別當硬性門檻。
+
+## Telegram agent
+
+用自然語言問數據，不必 SSH 進來下指令。
+
+```
+Telegram
+    │
+    ▼
+telegram_adapter.py     long polling、chat_id 白名單、訊息切段
+    │
+    ▼
+agent/core.py           Agent Core
+    │
+    ├── LLM             Claude（claude-opus-5）
+    ├── Planner         SDK 的 tool runner，自動跑「呼叫工具 → 餵回結果」的迴圈
+    ├── agent/memory.py 每個 chat 的對話歷史
+    └── agent/tools.py  查數據 / 觸發抓取 / 看抓取健康度
+```
+
+### 啟用
+
+在 `env` 補上三個變數後：
+
+```bash
+systemctl --user enable --now garmin-agent.service
+journalctl --user -u garmin-agent.service -f
+```
+
+| 變數 | 說明 |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | 跟 [@BotFather](https://t.me/BotFather) 申請 |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | 逗號分隔的白名單，**沒填會拒絕啟動** |
+| `ANTHROPIC_API_KEY` | Claude API 金鑰 |
+
+查自己的 chat id：先跟 bot 說一句話，再開
+`https://api.telegram.org/bot<TOKEN>/getUpdates`。
+
+### 幾個設計上的取捨
+
+**白名單沒有預設值。** 少了它，任何搜到這個 bot 的人都能查你的靜止心率跟睡眠。
+所以缺白名單時是直接 exit 2 拒絕啟動，而不是印個警告照跑。
+
+**記憶只存結論，不存工具呼叫。** `tool_use` 與 `tool_result` 區塊必須成對出現，
+歷史一旦裁切在中間，下次送出去就是 400。工具結果本來就是那一輪的暫時資料，
+需要時重跑一次比維護配對邏輯划算。
+
+**Planner 沒有自己寫迴圈。** 用 SDK 的 tool runner，省掉一份要維護的狀態機。
+
+**工具回 JSON 不回表格。** CLI 那些對齊過的 ASCII 表格是給人看的；
+模型讀 JSON 更穩，也更省 token。
+
+**工具直接重用既有函式。** 抓 Garmin 走 `cmd_fetch`，抓 intervals.icu 走
+`fetch_wellness` / `upsert_wellness`，查數據走 `v_daily`。CLI 改了行為，
+agent 這邊自動跟著改，不會有兩套會漂移的實作。
+
+**會連外網的工具在 prompt 裡被壓著用。** 排程本來就每天跑兩次，
+所以 `refresh_*` 只在使用者明確要求更新、或資料明顯過期時才呼叫。
 
 ## 想加別的指標
 

@@ -56,10 +56,14 @@ if [[ ! -d "$APP_DIR/venv" ]]; then
   python3 -m venv --copies "$APP_DIR/venv"
 fi
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-"$APP_DIR/venv/bin/pip" install --quiet --upgrade garminconnect curl_cffi
+"$APP_DIR/venv/bin/pip" install --quiet --upgrade garminconnect curl_cffi anthropic
 echo "  已安裝 garminconnect $("$APP_DIR/venv/bin/pip" show garminconnect | awk '/^Version/{print $2}')"
+echo "  已安裝 anthropic $("$APP_DIR/venv/bin/pip" show anthropic | awk '/^Version/{print $2}')"
 
 install -m 0755 "$SRC_DIR/garmin_endurance.py" "$APP_DIR/garmin_endurance.py"
+install -m 0755 "$SRC_DIR/telegram_adapter.py" "$APP_DIR/telegram_adapter.py"
+install -d -m 0755 "$APP_DIR/agent"
+install -m 0644 "$SRC_DIR"/agent/*.py "$APP_DIR/agent/"
 
 # --------------------------------------------------------------------------- #
 say "寫入設定檔"
@@ -80,6 +84,18 @@ GARMIN_BACKFILL_DAYS=45
 # ICU_ATHLETE_ID 留 0 即可，會由 key 自動解析。
 ICU_API_KEY=
 ICU_ATHLETE_ID=0
+
+# Telegram agent —— garmin-agent.service 用，不跑 agent 就留空。
+# TELEGRAM_BOT_TOKEN 跟 @BotFather 申請。
+# TELEGRAM_ALLOWED_CHAT_IDS 是逗號分隔的白名單，沒填 agent 會拒絕啟動
+# （不然任何人找到這個 bot 都能查你的健康資料）。
+# 查自己的 chat id：先跟 bot 說一句話，再開
+#   https://api.telegram.org/bot<TOKEN>/getUpdates
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ALLOWED_CHAT_IDS=
+
+# Claude API 金鑰，agent 的大腦。
+ANTHROPIC_API_KEY=
 EOF
   # systemd 的 EnvironmentFile 不展開 %h，這裡直接寫成絕對路徑
   sed -i "s|%h|$HOME|g" "$CONF_DIR/env"
@@ -104,6 +120,7 @@ say "安裝 systemd unit"
 
 install -m 0644 "$SRC_DIR/garmin-endurance.service" "$UNIT_DIR/"
 install -m 0644 "$SRC_DIR/garmin-endurance.timer"   "$UNIT_DIR/"
+install -m 0644 "$SRC_DIR/garmin-agent.service"     "$UNIT_DIR/"
 systemctl --user daemon-reload
 
 # --------------------------------------------------------------------------- #
@@ -135,5 +152,12 @@ cat <<EOF
 
   查看執行紀錄：
        journalctl --user -u garmin-endurance.service -n 50
+
+  5.（選用）啟用 Telegram agent：
+       在 $CONF_DIR/env 填入 TELEGRAM_BOT_TOKEN、
+       TELEGRAM_ALLOWED_CHAT_IDS、ANTHROPIC_API_KEY，然後：
+
+       systemctl --user enable --now garmin-agent.service
+       journalctl --user -u garmin-agent.service -f
 
 EOF
