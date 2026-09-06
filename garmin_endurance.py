@@ -427,6 +427,129 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# 回補歷史
+# --------------------------------------------------------------------------- #
+
+def fetch_one_day(client: Garmin, day: str) -> dict | None:
+    """
+    抓單一天的分數。
+
+    為什麼要一天打一次：這個端點的 calendarStartDate/calendarEndDate 是裝飾用的，
+    不論給多長的區間都只回「今天」的單一快照，aggregation 換成 weekly/monthly
+    也一樣。只有 calendarDate=<單日> 這個問法會回傳該日的歷史值。
+    """
+    payload = call_with_retry(client, ENDPOINT_PATH, {"calendarDate": day})
+    for rec in extract_records(payload):
+        # 只認日期相符的那筆。沒有資料的日子，Garmin 可能回最近一次的快照，
+        # 照單全收會把今天的分數蓋到過去的日期上。
+        if rec["calendar_date"] == day:
+            return rec
+    return None
+
+
+def cmd_backfill(args: argparse.Namespace) -> int:
+    # 跟排程的 fetch 共用同一把鎖，避免兩邊同時寫入
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock = open(LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.error("已有另一個抓取程序在執行（可能是排程），稍後再試")
+        return 1
+
+    conn = open_db()
+    try:
+        today = date.today()
+        if args.start:
+            start = date.fromisoformat(args.start)
+            end = date.fromisoformat(args.end) if args.end else today
+        else:
+            end = today
+            start = end - timedelta(days=args.days)
+        end = min(end, today)  # 未來的日期沒有意義
+
+        if start > end:
+            log.error("起始日期 %s 晚於結束日期 %s", start, end)
+            return 1
+
+        existing = {
+            r[0]
+            for r in conn.execute(
+                "SELECT calendar_date FROM endurance_score WHERE calendar_date BETWEEN ? AND ?",
+                (start.isoformat(), end.isoformat()),
+            )
+        }
+
+        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        todo = days if args.force else [d for d in days if d.isoformat() not in existing]
+
+        log.info(
+            "回補 %s ~ %s：共 %d 天，已有 %d 天，這次要打 %d 個請求（約 %.0f 分鐘）",
+            start, end, len(days), len(existing), len(todo),
+            len(todo) * (args.sleep + 0.4) / 60,
+        )
+        if not todo:
+            log.info("沒有需要回補的日期")
+            return 0
+
+        client = build_client(interactive=False)
+        got = changed = missing = 0
+
+        try:
+            for i, day in enumerate(todo, 1):
+                iso = day.isoformat()
+                try:
+                    rec = fetch_one_day(client, iso)
+                except Exception as exc:  # noqa: BLE001
+                    # 單日失敗不該讓整趟回補中斷 —— 記下來，繼續往下跑
+                    log.warning("%s 抓取失敗：%s", iso, str(exc)[:200])
+                    continue
+
+                if rec is None:
+                    missing += 1
+                else:
+                    got += 1
+                    changed += upsert(conn, [rec])
+
+                if i % 30 == 0 or i == len(todo):
+                    conn.commit()
+                    log.info(
+                        "進度 %d/%d（%s）：有分數 %d 天、無資料 %d 天、寫入 %d 筆",
+                        i, len(todo), iso, got, missing, changed,
+                    )
+
+                if i < len(todo):
+                    time.sleep(args.sleep)
+        except KeyboardInterrupt:
+            # 可續跑，所以中斷不算災難：把已完成的存好再退出
+            conn.commit()
+            log.warning("使用者中斷。已寫入的保留，重跑會從沒抓到的日期接著補")
+            return 130
+
+        conn.commit()
+        conn.execute(
+            """INSERT INTO fetch_log (ran_at, status, endpoint, rows_seen, rows_changed, message)
+               VALUES (?, 'ok', ?, ?, ?, ?)""",
+            (
+                now_iso(),
+                ENDPOINT_PATH + "?calendarDate（逐日回補）",
+                got,
+                changed,
+                f"{start} ~ {end}，無資料 {missing} 天",
+            ),
+        )
+        conn.commit()
+        log.info(
+            "回補完成：有分數 %d 天、無資料 %d 天、新增/更新 %d 筆", got, missing, changed
+        )
+        return 0
+    finally:
+        conn.close()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+# --------------------------------------------------------------------------- #
 # intervals.icu
 # --------------------------------------------------------------------------- #
 
@@ -682,6 +805,14 @@ def main() -> int:
     f = sub.add_parser("fetch", help="抓取並寫入資料庫")
     f.add_argument("--days", type=int, default=BACKFILL_DAYS)
     f.set_defaults(func=cmd_fetch)
+
+    b = sub.add_parser("backfill", help="逐日回補歷史耐力分數")
+    b.add_argument("--days", type=int, default=365, help="從今天往回幾天，預設 365")
+    b.add_argument("--start", metavar="YYYY-MM-DD", help="指定起始日，會蓋掉 --days")
+    b.add_argument("--end", metavar="YYYY-MM-DD", help="指定結束日，預設今天")
+    b.add_argument("--sleep", type=float, default=0.8, help="每個請求之間停幾秒，預設 0.8")
+    b.add_argument("--force", action="store_true", help="連已經有的日期也重抓")
+    b.set_defaults(func=cmd_backfill)
 
     m = sub.add_parser("merge", help="併入 intervals.icu 的 CTL/ATL")
     m.add_argument("--days", type=int, default=60)

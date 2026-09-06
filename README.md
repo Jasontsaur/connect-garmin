@@ -6,7 +6,7 @@
 
 | 檔案 | 用途 |
 |---|---|
-| `garmin_endurance.py` | 主程式，含 `login` / `fetch` / `merge` / `report` / `probe` 五個子命令 |
+| `garmin_endurance.py` | 主程式，含 `login` / `fetch` / `backfill` / `merge` / `report` / `probe` 六個子命令 |
 | `garmin-endurance.service` | systemd oneshot service |
 | `garmin-endurance.timer` | 排程 07:20 與 19:20，各帶 ±10 分鐘隨機延遲 |
 | `telegram_adapter.py` | Telegram 對話介面（long polling） |
@@ -35,6 +35,15 @@ systemctl --user enable --now garmin-endurance.timer
 
 ## 幾個設計上的取捨
 
+**日期區間參數是裝飾用的。** 這點很反直覺，值得記下來：
+`calendarStartDate` / `calendarEndDate` 給多長的區間都沒用，端點一律只回
+「今天」的單一快照，`aggregation` 換成 `weekly` / `monthly` 也一樣。
+唯一能取得歷史值的問法是 `calendarDate=<單一日期>`，所以 `backfill`
+只能一天打一次請求。
+
+也因為這樣，`fetch` 的 `--days` 其實不影響拿到多少資料 ——
+資料是每天跑兩次慢慢累積出來的，不是回溯抓的。
+
 **端點用試的，不是寫死。** 耐力分數在 `garminconnect` 裡沒有穩定的具名方法，
 腳本按順序試三種 `metrics-service/metrics/endurancescore` 的參數形式，第一個
 有回應的就用。三種都掛掉才算失敗。
@@ -62,6 +71,8 @@ Garmin 事後修正歷史分數的情況。
 ## 常用指令
 
 ```bash
+garmin-endurance backfill --days 365       # 回補一年歷史（逐日打，約 7 分鐘）
+garmin-endurance backfill --start 2025-01-01 --end 2025-12-31
 garmin-endurance report --days 60          # 趨勢 + 近 7 日均值比較
 garmin-endurance probe                     # 印出端點原始 JSON（偵錯用）
 systemctl --user list-timers garmin-endurance.timer
