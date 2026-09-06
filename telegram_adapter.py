@@ -207,6 +207,9 @@ def main() -> int:
 
             try:
                 tg.send(chat_id, reply)
+                # 成功也要留一行。只記失敗的話，要確認「到底有沒有送到」
+                # 就得去翻資料庫反推，這在出問題時是最不想做的事。
+                log.info("[%s] 已回覆 %d 字", chat_id, len(reply))
             except Exception:  # noqa: BLE001
                 log.exception("送出回覆失敗")
 
