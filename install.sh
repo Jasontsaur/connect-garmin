@@ -56,9 +56,9 @@ if [[ ! -d "$APP_DIR/venv" ]]; then
   python3 -m venv --copies "$APP_DIR/venv"
 fi
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-"$APP_DIR/venv/bin/pip" install --quiet --upgrade garminconnect curl_cffi anthropic
+"$APP_DIR/venv/bin/pip" install --quiet --upgrade garminconnect curl_cffi openai
 echo "  已安裝 garminconnect $("$APP_DIR/venv/bin/pip" show garminconnect | awk '/^Version/{print $2}')"
-echo "  已安裝 anthropic $("$APP_DIR/venv/bin/pip" show anthropic | awk '/^Version/{print $2}')"
+echo "  已安裝 openai $("$APP_DIR/venv/bin/pip" show openai | awk '/^Version/{print $2}')"
 
 install -m 0755 "$SRC_DIR/garmin_endurance.py" "$APP_DIR/garmin_endurance.py"
 install -m 0755 "$SRC_DIR/telegram_adapter.py" "$APP_DIR/telegram_adapter.py"
@@ -94,8 +94,11 @@ ICU_ATHLETE_ID=0
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_CHAT_IDS=
 
-# Claude API 金鑰，agent 的大腦。
-ANTHROPIC_API_KEY=
+# OpenAI，agent 的大腦。
+# OPENAI_MODEL 留空會用 agent/core.py 的預設值；型號設錯時 agent 會在啟動時
+# 直接報錯並列出這把金鑰實際可用的型號，不會等到你傳訊息才 404。
+OPENAI_API_KEY=
+OPENAI_MODEL=
 EOF
   # systemd 的 EnvironmentFile 不展開 %h，這裡直接寫成絕對路徑
   sed -i "s|%h|$HOME|g" "$CONF_DIR/env"
@@ -155,7 +158,7 @@ cat <<EOF
 
   5.（選用）啟用 Telegram agent：
        在 $CONF_DIR/env 填入 TELEGRAM_BOT_TOKEN、
-       TELEGRAM_ALLOWED_CHAT_IDS、ANTHROPIC_API_KEY，然後：
+       TELEGRAM_ALLOWED_CHAT_IDS、OPENAI_API_KEY，然後：
 
        systemctl --user enable --now garmin-agent.service
        journalctl --user -u garmin-agent.service -f

@@ -8,7 +8,8 @@ Telegram Adapter —— agent 的對外介面。
 環境變數：
   TELEGRAM_BOT_TOKEN         跟 @BotFather 申請的 token
   TELEGRAM_ALLOWED_CHAT_IDS  逗號分隔的 chat id 白名單（必填）
-  ANTHROPIC_API_KEY          Claude API 金鑰
+  OPENAI_API_KEY             OpenAI API 金鑰
+  OPENAI_MODEL               型號，不填用 agent.core 的預設值
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import garmin_endurance as ge  # noqa: E402
-from agent.core import AgentCore, api_key_present  # noqa: E402
+from agent.core import AgentCore, api_key_present, verify_model  # noqa: E402
 
 log = logging.getLogger("telegram")
 
@@ -134,12 +135,19 @@ def main() -> int:
     allowed = {int(x) for x in raw_ids.replace(" ", "").split(",") if x}
 
     if not api_key_present():
-        log.error("沒有 ANTHROPIC_API_KEY，agent 無法運作")
+        log.error("沒有 OPENAI_API_KEY，agent 無法運作")
         return 2
 
     tg = Telegram(token)
     conn = ge.open_db()
     agent = AgentCore(conn)
+
+    ok, detail = verify_model(agent.client, agent.model)
+    if not ok:
+        log.error("%s", detail)
+        return 2
+    log.info("%s", detail)
+
     log.info("啟動完成，白名單 %s", sorted(allowed))
 
     offset: int | None = None

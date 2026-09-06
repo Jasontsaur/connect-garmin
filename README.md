@@ -127,8 +127,8 @@ telegram_adapter.py     long polling、chat_id 白名單、訊息切段
     ▼
 agent/core.py           Agent Core
     │
-    ├── LLM             Claude（claude-opus-5）
-    ├── Planner         SDK 的 tool runner，自動跑「呼叫工具 → 餵回結果」的迴圈
+    ├── LLM             OpenAI（型號由 OPENAI_MODEL 帶，不寫死）
+    ├── Planner         自寫迴圈：呼叫工具 → 餵回結果 → 再問，上限 8 步
     ├── agent/memory.py 每個 chat 的對話歷史
     └── agent/tools.py  查數據 / 觸發抓取 / 看抓取健康度
 ```
@@ -146,7 +146,8 @@ journalctl --user -u garmin-agent.service -f
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | 跟 [@BotFather](https://t.me/BotFather) 申請 |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | 逗號分隔的白名單，**沒填會拒絕啟動** |
-| `ANTHROPIC_API_KEY` | Claude API 金鑰 |
+| `OPENAI_API_KEY` | OpenAI API 金鑰 |
+| `OPENAI_MODEL` | 型號，留空用預設值 |
 
 查自己的 chat id：先跟 bot 說一句話，再開
 `https://api.telegram.org/bot<TOKEN>/getUpdates`。
@@ -160,7 +161,17 @@ journalctl --user -u garmin-agent.service -f
 歷史一旦裁切在中間，下次送出去就是 400。工具結果本來就是那一輪的暫時資料，
 需要時重跑一次比維護配對邏輯划算。
 
-**Planner 沒有自己寫迴圈。** 用 SDK 的 tool runner，省掉一份要維護的狀態機。
+**型號不寫死，而且啟動時驗證。** OpenAI 的型號命名換得比這個專案改版快。
+`OPENAI_MODEL` 設錯時，agent 會在啟動時就報錯並列出這把金鑰實際可用的型號，
+而不是等你在 Telegram 上傳第一則訊息才收到 404。列不出型號（例如走代理）
+只警告不擋啟動。
+
+**Planner 的迴圈有步數上限。** 模型鬼打牆時（一直要求同一個工具卻不下結論）
+會在第 8 步停下來回一句話，不會無聲地一直燒 token。
+
+**工具的錯誤是回給模型，不是往上炸。** 工具名打錯、參數不是合法 JSON、
+執行時例外，一律包成一段 JSON 錯誤訊息當作工具結果餵回去 ——
+模型收到還有機會換個做法，收不到就只會卡住。
 
 **工具回 JSON 不回表格。** CLI 那些對齊過的 ASCII 表格是給人看的；
 模型讀 JSON 更穩，也更省 token。
