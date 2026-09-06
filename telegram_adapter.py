@@ -192,8 +192,9 @@ def main() -> int:
             if not text:
                 continue
 
-            if chat_id not in allowed:
-                log.warning("拒絕未授權的 chat_id %s：%.50s", chat_id, text)
+            ok, why = is_authorized(message, allowed)
+            if not ok:
+                log.warning("拒絕未授權的訊息（%s）：%.50s", why, text)
                 continue
 
             log.info("[%s] %s", chat_id, text)
@@ -216,6 +217,32 @@ def main() -> int:
     conn.close()
     log.info("已停止")
     return 0
+
+
+def is_authorized(message: dict, allowed: set[int]) -> tuple[bool, str]:
+    """
+    對話與發訊者都必須在白名單裡。
+
+    一對一私訊時 chat.id 跟 from.id 是同一個數字，所以第二道檢查在目前的用法下
+    不會擋掉任何東西。留著是因為「只有我能用」不該靠「私訊時兩者剛好相等」
+    這個推論成立 —— 哪天把 bot 拉進群組、或白名單多加一個 id，
+    這行就是唯一擋得住「別人在我授權的對話裡發言」的東西。
+
+    bot 自己發的訊息也擋掉：避免哪天多接了一個會轉發訊息的東西造成回音迴圈。
+    """
+    chat_id = message.get("chat", {}).get("id")
+    if chat_id not in allowed:
+        return False, f"chat_id {chat_id}"
+
+    sender = message.get("from", {})
+    sender_id = sender.get("id")
+    if sender_id not in allowed:
+        return False, f"發訊者 {sender_id}"
+
+    if sender.get("is_bot"):
+        return False, f"發訊者 {sender_id} 是 bot"
+
+    return True, ""
 
 
 def _dispatch(agent: AgentCore, chat_id: int, text: str) -> str:
