@@ -134,9 +134,10 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
+    env_path = ge.app_dir("config") / "env"
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        log.error("沒有 TELEGRAM_BOT_TOKEN，請在 ~/.config/garmin-endurance/env 補上")
+        log.error("沒有 TELEGRAM_BOT_TOKEN，請在 %s 補上", env_path)
         return 2
 
     raw_ids = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()

@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
-import fcntl
 import json
 import logging
 import os
@@ -37,6 +36,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+IS_WINDOWS = sys.platform == "win32"
+
 try:
     from garminconnect import Garmin
 except ImportError:  # pragma: no cover
@@ -45,17 +46,110 @@ except ImportError:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
+# 平台差異
+# --------------------------------------------------------------------------- #
+
+def app_dir(kind: str) -> Path:
+    """
+    設定檔與資料的存放位置。
+
+    Windows 一律用 %LOCALAPPDATA%：Local 不會漫遊、也不會被 OneDrive 同步。
+    這很重要 —— 這台機器的「文件」和「桌面」都已經被 OneDrive 接管，
+    金鑰或健康資料放進那些資料夾就會自動上傳到雲端。
+
+    Linux 維持原本的 XDG 慣例，行為完全不變。
+    """
+    if IS_WINDOWS:
+        base = os.getenv("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local")
+        return Path(base) / "garmin-endurance"
+    if kind == "config":
+        return Path(os.path.expanduser("~/.config/garmin-endurance"))
+    return Path(os.path.expanduser("~/.local/share/garmin-endurance"))
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """
+    自己讀設定檔。
+
+    Linux 上這件事原本是 systemd 的 EnvironmentFile= 做的，但 Windows 的
+    工作排程器沒有對應品。改由程式自己讀，兩邊才會是同一套行為。
+
+    已經存在的環境變數不覆蓋：systemd 帶進來的、或你在 shell 裡 export 的，
+    優先權都高於檔案。
+
+    順手 strip 掉行尾的 \\r —— 從 Windows 的編輯器存檔很容易寫成 CRLF，
+    而金鑰尾端多一個看不見的字元只會換來一個 401，從錯誤訊息完全看不出原因。
+    """
+    path = path or app_dir("config") / "env"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return
+    for line in text.splitlines():
+        line = line.strip().lstrip("﻿")  # 順便吃掉 Windows 記事本的 BOM
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+if IS_WINDOWS:
+    import msvcrt
+
+    def lock_exclusive(fh) -> bool:
+        """搶到鎖回 True，已被佔用回 False。"""
+        try:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def unlock(fh) -> None:
+        try:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def lock_exclusive(fh) -> bool:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
+    def unlock(fh) -> None:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+# --------------------------------------------------------------------------- #
 # 設定
 # --------------------------------------------------------------------------- #
 
-TOKENSTORE = os.path.expanduser(os.getenv("GARMIN_TOKENS", "~/.garminconnect"))
+# 要在讀取下面任何環境變數之前載入，否則設定檔裡的值來不及生效
+load_env_file()
+
+TOKENSTORE = os.path.expanduser(
+    os.getenv("GARMIN_TOKENS")
+    or (str(app_dir("data") / "tokens") if IS_WINDOWS else "~/.garminconnect")
+)
 DB_PATH = Path(
-    os.path.expanduser(
-        os.getenv("GARMIN_DB", "~/.local/share/garmin-endurance/garmin.db")
-    )
+    os.path.expanduser(os.getenv("GARMIN_DB") or str(app_dir("data") / "garmin.db"))
 )
 BACKFILL_DAYS = int(os.getenv("GARMIN_BACKFILL_DAYS", "45"))
-LOCK_PATH = Path(os.path.expanduser("~/.cache/garmin-endurance.lock"))
+LOCK_PATH = Path(
+    os.path.expanduser(
+        os.getenv("GARMIN_LOCK")
+        or (
+            str(app_dir("data") / "fetch.lock")
+            if IS_WINDOWS
+            else "~/.cache/garmin-endurance.lock"
+        )
+    )
+)
 
 # 耐力分數目前沒有穩定的具名 wrapper 方法，直接打原始端點。
 # Garmin 偶爾會調整路徑，所以按順序試，第一個成功的就用。
@@ -376,10 +470,9 @@ def upsert(conn: sqlite3.Connection, records: list[dict]) -> int:
 def cmd_fetch(args: argparse.Namespace) -> int:
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock = open(LOCK_PATH, "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not lock_exclusive(lock):
         log.warning("已有另一個抓取程序在執行，本次略過")
+        lock.close()
         return 0
 
     conn = open_db()
@@ -422,7 +515,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         return 1
     finally:
         conn.close()
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        unlock(lock)
         lock.close()
 
 
@@ -451,10 +544,9 @@ def cmd_backfill(args: argparse.Namespace) -> int:
     # 跟排程的 fetch 共用同一把鎖，避免兩邊同時寫入
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock = open(LOCK_PATH, "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not lock_exclusive(lock):
         log.error("已有另一個抓取程序在執行（可能是排程），稍後再試")
+        lock.close()
         return 1
 
     conn = open_db()
@@ -545,7 +637,7 @@ def cmd_backfill(args: argparse.Namespace) -> int:
         return 0
     finally:
         conn.close()
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        unlock(lock)
         lock.close()
 
 

@@ -5,6 +5,18 @@ garmin.db*
 *.sqlite3
 daily.csv
 *.csv
+
+# 金鑰。Linux 上它在 ~/.config 所以天然不在 repo 裡，但 Windows 版把設定、
+# 資料跟程式放在同一個 %LOCALAPPDATA% 目錄下，少了這行就會被 commit。
+env
+.env
+
+# Garmin 的登入 token（Windows 版放在部署目錄裡）
+tokens/
+*.lock
+
+logs/
 venv/
+.venv/
 __pycache__/
 *.pyc
