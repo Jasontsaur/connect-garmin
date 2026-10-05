@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,12 +126,43 @@ HELP = """\
 """
 
 
-def main() -> int:
+def setup_logging() -> None:
+    """
+    日誌同時寫 stderr 與檔案。
+
+    自己寫檔案而不是靠 shell 重導向，是為了讓排程工作可以直接執行 python.exe，
+    中間不夾一層 cmd.exe —— 夾了那層，工作排程器管到的是 cmd，停止工作時
+    python 會變成孤兒繼續輪詢 Telegram。等排程再啟動一次就有兩個 poller
+    搶同一個 token，症狀是訊息隨機消失，而且很難聯想到是這裡造成的。
+
+    順帶也解決了 Windows 上的輸出緩衝與字碼頁問題：檔案 handler 明確指定
+    UTF-8，不受主控台字碼頁影響。
+    """
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+
+    log_dir = Path(os.getenv("GARMIN_LOG_DIR") or ge.app_dir("data") / "logs")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(
+                log_dir / "agent.log",
+                maxBytes=2_000_000,
+                backupCount=5,
+                encoding="utf-8",
+            )
+        )
+    except OSError as exc:  # 寫不了檔案不該讓 bot 起不來
+        print(f"無法建立日誌檔（{exc}），只輸出到 stderr", file=sys.stderr)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stderr,
+        handlers=handlers,
     )
+
+
+def main() -> int:
+    setup_logging()
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 

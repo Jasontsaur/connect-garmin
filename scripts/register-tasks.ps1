@@ -45,13 +45,26 @@ Register-ScheduledTask -TaskName "GarminEndurance-Fetch" `
 
 # Telegram bot：開機就起，掛了每分鐘重試。ExecutionTimeLimit 0 = 不限時間，
 # 否則排程器預設 3 天後會把常駐程序砍掉。
+#
+# 注意這裡直接執行 python.exe，不像 fetch 那樣經過 .cmd ——
+# 夾一層 cmd.exe 的話，排程器管到的是 cmd，停止工作時 python 會變成孤兒
+# 繼續輪詢 Telegram；等工作再啟動就有兩個 poller 搶同一個 token，
+# 症狀是訊息隨機消失。日誌改由 telegram_adapter.py 自己寫檔案。
 $agentSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew
 
+# 註冊前先清掉殘留的 bot 程序，避免新舊兩個同時輪詢。
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*telegram_adapter.py*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 Register-ScheduledTask -TaskName "GarminEndurance-Agent" `
-    -Action (New-ScheduledTaskAction -Execute "$App\scripts\run-agent.cmd") `
+    -Action (New-ScheduledTaskAction `
+        -Execute "$App\venv\Scripts\python.exe" `
+        -Argument "-u -X utf8 `"$App\telegram_adapter.py`"" `
+        -WorkingDirectory $App) `
     -Trigger (New-ScheduledTaskTrigger -AtStartup) `
     -Principal $principal -Settings $agentSettings -Force | Out-Null
 
