@@ -1,6 +1,32 @@
 # garmin-endurance
 
-每日兩次抓取 Garmin Connect 耐力分數，存進 SQLite，跑在 mini PC 的 WSL2 上。
+每日兩次抓取 Garmin Connect 耐力分數，存進 SQLite，跑在 mini PC 上。
+另有 Telegram bot 可以用自然語言問訓練數據。
+
+## 部署路徑
+
+目前跑在**原生 Windows**（2026-10 從 WSL2 遷過來）。
+
+| 用途 | 路徑 |
+|---|---|
+| 程式、資料、設定 | `%LOCALAPPDATA%\garmin-endurance\` |
+| 展開後 | `C:\Users\<你>\AppData\Local\garmin-endurance\` |
+| 金鑰 | 同目錄下的 `env`（ACL 只有本人） |
+| 資料庫 | 同目錄下的 `garmin.db` |
+| Garmin token | 同目錄下的 `tokens\` |
+| 日誌 | 同目錄下的 `logs\`（`agent.log`、`fetch.log`） |
+| 桌面捷徑 | `桌面\agents\garmin-endurance\` |
+
+**為什麼全部在 `%LOCALAPPDATA%`**：Local 不會漫遊、也不會被 OneDrive 同步。
+這台機器的「文件」和「桌面」都已經被 OneDrive 接管，金鑰或健康資料放進
+那些資料夾就會自動上傳到雲端。桌面那個資料夾只放捷徑與啟動腳本，沒有機密。
+
+排程工作：`GarminEndurance-Fetch`（每日 07:20 / 19:20）、
+`GarminEndurance-Agent`（開機啟動，失敗每分鐘重試）。
+兩者都用 S4U 登入型別 —— 不論是否登入都會執行，而且 Windows 不需要保存密碼。
+
+Linux 的路徑慣例（`~/.config`、`~/.local/share`、`~/.garminconnect`）仍然支援，
+程式會依平台自己選，所以同一份原始碼兩邊都能跑。
 
 ## 檔案
 

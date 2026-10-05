@@ -1,4 +1,6 @@
 @echo off
+REM cmd 自己的輸出（%DATE% 的星期幾）走 OEM 字碼頁，不切 UTF-8 會變問號
+chcp 65001 >nul
 REM ---------------------------------------------------------------------------
 REM Telegram agent 的啟動腳本。工作排程器開機時呼叫它，也可以手動雙擊執行。
 REM
@@ -12,7 +14,7 @@ set "LOGDIR=%APP%\logs"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
 echo [%DATE% %TIME%] starting agent >> "%LOGDIR%\agent.log"
-"%APP%\venv\Scripts\python.exe" -X utf8 "%APP%\telegram_adapter.py" >> "%LOGDIR%\agent.log" 2>&1
+"%APP%\venv\Scripts\python.exe" -u -X utf8 "%APP%\telegram_adapter.py" >> "%LOGDIR%\agent.log" 2>&1
 set RC=%ERRORLEVEL%
 echo [%DATE% %TIME%] agent exited with %RC% >> "%LOGDIR%\agent.log"
 

@@ -18,6 +18,13 @@
 
 $ErrorActionPreference = "Stop"
 
+# PowerShell 5.1 預設用系統 ANSI 字碼頁寫 console，這個腳本的訊息是中文，
+# 不設這兩行會全部變成問號 —— 包括出錯時的訊息，那最不該看不懂。
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch { }
+
 $App     = Join-Path $env:LOCALAPPDATA "garmin-endurance"
 $Src     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile = Join-Path $App "env"
@@ -29,20 +36,35 @@ function Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
 # --------------------------------------------------------------------------- #
 Say "檢查 Python"
 
-$Python = Get-Command python.exe -ErrorAction SilentlyContinue |
-          Select-Object -ExpandProperty Source -First 1
-if (-not $Python) {
-    $guess = Join-Path $env:LOCALAPPDATA "Programs\Python\Python314\python.exe"
-    if (Test-Path $guess) { $Python = $guess }
-}
-if (-not $Python) {
-    throw "找不到 python.exe。請先安裝：winget install --id Python.Python.3.14 --scope user"
-}
+# 候選依序試，而且一定要真的跑起來才算數。
+#
+# 為什麼不能只用 Get-Command：Windows 在 %LOCALAPPDATA%\Microsoft\WindowsApps
+# 放了一個叫 python.exe 的「應用程式執行別名」，它不是 Python，只是個會叫你去
+# Microsoft Store 安裝的殼。Get-Command 會優先找到它，然後後面每一步都失敗。
+$candidates = @()
+$candidates += Get-ChildItem (Join-Path $env:LOCALAPPDATA "Programs\Python") -Directory -ErrorAction SilentlyContinue |
+               Sort-Object Name -Descending |
+               ForEach-Object { Join-Path $_.FullName "python.exe" }
+$candidates += "$env:ProgramFiles\Python314\python.exe", "$env:ProgramFiles\Python313\python.exe"
+$candidates += Get-Command python.exe -All -ErrorAction SilentlyContinue |
+               Select-Object -ExpandProperty Source
 
-$ver = & $Python -c "import sys; print('%d.%d' % sys.version_info[:2])"
+$Python = $null
+foreach ($c in $candidates) {
+    if (-not $c -or -not (Test-Path $c)) { continue }
+    if ($c -like "*\WindowsApps\*") { continue }   # Store 的假 python
+    $v = & $c -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $v) {
+        $major, $minor = $v.Split('.')
+        if ([int]$major -gt 3 -or ([int]$major -eq 3 -and [int]$minor -ge 12)) {
+            $Python = $c; $ver = $v; break
+        }
+    }
+}
+if (-not $Python) {
+    throw "找不到可用的 Python 3.12 以上。請先安裝：winget install --id Python.Python.3.14 --scope user"
+}
 Write-Host "  $Python (Python $ver)"
-$ok = & $Python -c "import sys; print(1 if sys.version_info >= (3,12) else 0)"
-if ($ok -ne "1") { throw "需要 Python 3.12 以上（garminconnect 的要求），目前是 $ver" }
 
 # --------------------------------------------------------------------------- #
 Say "建立目錄並收緊權限"
@@ -104,7 +126,11 @@ TELEGRAM_ALLOWED_CHAT_IDS=
 # OpenAI，agent 的大腦。
 OPENAI_API_KEY=
 OPENAI_MODEL=
-"@ | Set-Content -Path $EnvFile -Encoding utf8NoBOM
+"@ | ForEach-Object {
+        # 不用 Set-Content -Encoding：PowerShell 5.1 的 UTF8 會寫 BOM，
+        # 而 utf8NoBOM 要 PowerShell 7 才有。走 .NET 兩個版本都一致。
+        [System.IO.File]::WriteAllText($EnvFile, $_, (New-Object System.Text.UTF8Encoding $false))
+    }
     Write-Host "  已建立 $EnvFile"
 } else {
     Write-Host "  $EnvFile 已存在，保留不動"

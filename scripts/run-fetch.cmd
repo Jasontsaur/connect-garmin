@@ -1,4 +1,6 @@
 @echo off
+REM cmd 自己的輸出（%DATE% 的星期幾）走 OEM 字碼頁，不切 UTF-8 會變問號
+chcp 65001 >nul
 REM ---------------------------------------------------------------------------
 REM 每日兩次的抓取。對應原本 systemd 的 garmin-endurance.service。
 REM
@@ -12,10 +14,10 @@ if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 set "LOG=%LOGDIR%\fetch.log"
 
 echo [%DATE% %TIME%] ---- fetch start ---- >> "%LOG%"
-"%APP%\venv\Scripts\python.exe" -X utf8 "%APP%\garmin_endurance.py" fetch >> "%LOG%" 2>&1
+"%APP%\venv\Scripts\python.exe" -u -X utf8 "%APP%\garmin_endurance.py" fetch >> "%LOG%" 2>&1
 set RC=%ERRORLEVEL%
 
-"%APP%\venv\Scripts\python.exe" -X utf8 "%APP%\garmin_endurance.py" merge --csv "%APP%\daily.csv" >> "%LOG%" 2>&1
+"%APP%\venv\Scripts\python.exe" -u -X utf8 "%APP%\garmin_endurance.py" merge --csv "%APP%\daily.csv" >> "%LOG%" 2>&1
 
 REM 清掉 30 天前的日誌。沒有 logrotate 可用，不自己收就會一直長。
 forfiles /p "%LOGDIR%" /m *.log /d -30 /c "cmd /c del @path" 2>nul
